@@ -26,3 +26,17 @@ ALTER TABLE Users
   CONSTRAINT CK_Users_Role CHECK (Role IN ('Admin', 'User', 'Guest'));
 
 CREATE INDEX IX_Users_Username ON Users(Username);
+
+ALTER TABLE Users
+    ADD FailedLoginCount INT NOT NULL CONSTRAINT DF_Users_Failed DEFAULT 0,
+      LockoutUntilUtc  DATETIME2 NULL;
+
+CREATE TABLE LoginAudit (
+                            AuditID    BIGINT IDENTITY(1,1) PRIMARY KEY,
+                            Username   NVARCHAR(100) NOT NULL,
+                            IpAddress  NVARCHAR(64)  NULL,
+                            Outcome    NVARCHAR(20)  NOT NULL,
+                            CreatedUtc DATETIME2     NOT NULL DEFAULT SYSUTCDATETIME()
+);
+
+CREATE INDEX IX_LoginAudit_Username_Created ON LoginAudit(Username, CreatedUtc DESC);

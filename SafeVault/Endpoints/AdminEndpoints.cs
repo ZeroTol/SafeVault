@@ -31,6 +31,14 @@ public static class AdminEndpoints
                     : TypedResults.NotFound(new { error = "User not found." });
             });
 
+        // Task 3 — audit trail viewer
+        admin.MapGet("/audit/logins",
+            async (IUserRepository repo, int take = 50) =>
+            {
+                var rows = await repo.GetRecentLoginsAsync(take);
+                return TypedResults.Ok(rows);
+            });
+
         return app;
     }
 }

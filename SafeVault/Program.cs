@@ -9,6 +9,13 @@ using SafeVault.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+
+builder.WebHost.ConfigureKestrel(o =>
+{
+    o.Limits.MaxRequestBodySize    = 64 * 1024;
+    o.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(15);
+});
+
 // --- DI ---
 
 var useInMemory = builder.Configuration.GetValue("Database:UseInMemory", defaultValue: true);
@@ -68,6 +75,8 @@ app.Use(async (ctx, next) =>
     ctx.Response.Headers["Referrer-Policy"]        = "no-referrer";
     ctx.Response.Headers["Content-Security-Policy"] =
         "default-src 'self'; script-src 'self'; style-src 'self';";
+    ctx.Response.Headers["Permissions-Policy"] =
+        "camera=(), microphone=(), geolocation=(), interest-cohort=()";
     await next();
 });
 

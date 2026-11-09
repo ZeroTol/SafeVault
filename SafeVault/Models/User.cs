@@ -7,4 +7,6 @@ public class User
     public string Email { get; set; } = string.Empty;
     public string PasswordHash { get; set; } = string.Empty;
     public string Role { get; set; } = "User";
+    public int FailedLoginCount { get; set; }
+    public DateTime? LockoutUntilUtc { get; set; }
 }

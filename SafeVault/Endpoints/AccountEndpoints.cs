@@ -13,7 +13,7 @@ public static class AccountEndpoints
 
         group.MapPost("/register", RegisterAsync);
         group.MapPost("/login",    LoginAsync);
-        group.MapGet ("/me",       MeAsync).RequireAuthorization();   // any authenticated user
+        group.MapGet ("/me",       MeAsync).RequireAuthorization();
 
         return app;
     }
@@ -25,28 +25,40 @@ public static class AccountEndpoints
             !ValidationHelpers.IsValidPassword(req.Password) ||
             !XssProtection.IsSafeInput(req.Username) ||
             !XssProtection.IsSafeInput(req.Email))
+        {
             return TypedResults.ValidationProblem(new Dictionary<string, string[]>
-                { ["input"] = ["Input failed validation."] });
+            {
+                ["input"] = ["Input failed validation."]
+            });
+        }
 
         return await auth.RegisterAsync(req.Username, req.Email, req.Password)
             ? TypedResults.Created($"/api/account/users/{req.Username}")
             : TypedResults.Conflict(new { error = "Username already exists." });
     }
 
-    private static async Task<IResult> LoginAsync(LoginRequest req, IAuthService auth)
+    private static async Task<IResult> LoginAsync(
+        LoginRequest req, IAuthService auth, HttpContext ctx)
     {
         if (!ValidationHelpers.IsValidInput(req.Username) ||
             !XssProtection.IsSafeInput(req.Username))
+        {
             return TypedResults.BadRequest(new { error = "Invalid credentials format." });
+        }
 
-        var result = await auth.LoginAsync(req.Username, req.Password);
+        // Task 3: forward client IP to the audit trail.
+        var result = await auth.LoginAsync(
+            req.Username, req.Password,
+            ctx.Connection.RemoteIpAddress?.ToString());
+
         return result is null ? TypedResults.Unauthorized() : TypedResults.Ok(result);
     }
 
     private static IResult MeAsync(ClaimsPrincipal user) =>
         TypedResults.Ok(new
         {
-            userId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub"),
+            userId = user.FindFirstValue(ClaimTypes.NameIdentifier)
+                     ?? user.FindFirstValue("sub"),
             name   = user.Identity?.Name,
             role   = user.FindFirstValue(ClaimTypes.Role)
         });

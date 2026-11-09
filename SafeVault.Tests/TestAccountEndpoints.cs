@@ -1,12 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using NUnit.Framework;
-using SafeVault.Data;
-using SafeVault.Models;
 using SafeVault.Models.Contracts;
+using SafeVault.Tests;
 
 [TestFixture]
 public class TestAccountEndpoints
@@ -17,17 +13,8 @@ public class TestAccountEndpoints
     [SetUp]
     public void Setup()
     {
-        _factory = new WebApplicationFactory<Program>()
-            .WithWebHostBuilder(builder =>
-            {
-                builder.ConfigureServices(services =>
-                {
-                    services.RemoveAll<IUserRepository>();
-                    services.AddSingleton<IUserRepository, FakeUserRepository>();
-                });
-            });
-
-        _client = _factory.CreateClient();
+        _factory = TestFactory.Create();
+        _client  = _factory.CreateClient();
     }
 
     [TearDown]
@@ -37,25 +24,7 @@ public class TestAccountEndpoints
         _factory.Dispose();
     }
 
-    [Test]
-    public async Task Register_Rejects_SqlInjection_Payload()
-    {
-        var payload = new RegisterRequest(
-            "'; DROP TABLE Users; --", "test@example.com", "ValidP@ssw0rd123!");
-
-        var resp = await _client.PostAsJsonAsync("/api/account/register", payload);
-        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
-    }
-
-    [Test]
-    public async Task Register_Rejects_Xss_Payload_In_Username()
-    {
-        var payload = new RegisterRequest(
-            "<script>alert(1)</script>", "test@example.com", "ValidP@ssw0rd123!");
-
-        var resp = await _client.PostAsJsonAsync("/api/account/register", payload);
-        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
-    }
+    // SQLi / XSS through the register username are covered in TestSecurityAttacks.
 
     [Test]
     public async Task Register_Rejects_Invalid_Email()
@@ -68,6 +37,16 @@ public class TestAccountEndpoints
     }
 
     [Test]
+    public async Task Register_Accepts_Valid_User()
+    {
+        var payload = new RegisterRequest(
+            "carol", "carol@example.com", "ValidP@ssw0rd123!");
+
+        var resp = await _client.PostAsJsonAsync("/api/account/register", payload);
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.Created));
+    }
+
+    [Test]
     public async Task Login_Rejects_Empty_Username()
     {
         var resp = await _client.PostAsJsonAsync(
@@ -75,37 +54,62 @@ public class TestAccountEndpoints
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }
 
-    // ---------- in-memory fake (all 4 interface members) ----------
-    private sealed class FakeUserRepository : IUserRepository
+    // Classic auth-bypass payloads must never yield a token.
+    [TestCase("' OR '1'='1")]
+    [TestCase("admin'--")]
+    [TestCase("admin' OR 1=1--")]
+    [TestCase("'; DROP TABLE Users; --")]
+    [TestCase("admin\"; --")]
+    public async Task Login_Rejects_SqlInjection_In_Username(string payload)
     {
-        private readonly Dictionary<string, User> _users = new(StringComparer.Ordinal);
+        var resp = await _client.PostAsJsonAsync(
+            "/api/account/login", new LoginRequest(payload, "anything"));
 
-        public Task<User?> GetByUsernameAsync(string username) =>
-            Task.FromResult(_users.TryGetValue(username, out var u) ? u : null);
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(await resp.Content.ReadAsStringAsync(), Does.Not.Contain("accessToken"));
+    }
 
-        public Task<int> CreateUserAsync(
-            string username, string email, string passwordHash, string role = "User")
-        {
-            var id = _users.Count + 1;
-            _users[username] = new User
-            {
-                UserID       = id,
-                Username     = username,
-                Email        = email,
-                PasswordHash = passwordHash,
-                Role         = role
-            };
-            return Task.FromResult(id);
-        }
+    [TestCase("' OR '1'='1")]
+    [TestCase("' OR 1=1--")]
+    [TestCase("ChangeMe!P@ssw0rd2024' OR '1'='1")]
+    public async Task Login_SqlInjection_In_Password_Is_Unauthorized(string payload)
+    {
+        var resp = await _client.PostAsJsonAsync(
+            "/api/account/login", new LoginRequest("admin", payload));
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized));
+    }
 
-        public Task<bool> SetRoleAsync(string username, string role)
-        {
-            if (!_users.TryGetValue(username, out var u)) return Task.FromResult(false);
-            u.Role = role;
-            return Task.FromResult(true);
-        }
+    [Test]
+    public async Task SqlInjection_Attempt_Does_Not_Damage_Data()
+    {
+        await _client.PostAsJsonAsync("/api/account/login",
+            new LoginRequest("'; DROP TABLE Users; --", "x"));
 
-        public Task<bool> AnyAdminExistsAsync() =>
-            Task.FromResult(_users.Values.Any(u => u.Role == "Admin"));
+        // Admin account must still exist and work afterwards.
+        var resp = await _client.PostAsJsonAsync("/api/account/login",
+            new LoginRequest("admin", "ChangeMe!P@ssw0rd2024"));
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.OK));
+    }
+
+    [TestCase("<script>alert(1)</script>")]
+    [TestCase("<img src=x onerror=alert(1)>")]
+    [TestCase("<svg/onload=alert(1)>")]
+    public async Task Login_Rejects_Xss_In_Username_Without_Reflecting_It(string payload)
+    {
+        var resp = await _client.PostAsJsonAsync(
+            "/api/account/login", new LoginRequest(payload, "anything"));
+
+        Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
+        Assert.That(await resp.Content.ReadAsStringAsync(), Does.Not.Contain(payload));
+    }
+
+    [Test]
+    public async Task Oversized_Body_Is_Rejected()
+    {
+        var huge = new string('a', 128 * 1024);
+        var payload = new RegisterRequest(huge, "a@b.co", "ValidP@ssw0rd123!");
+
+        var res = await _client.PostAsJsonAsync("/api/account/register", payload);
+        Assert.That((int)res.StatusCode, Is.GreaterThanOrEqualTo(400));  // 400/413
     }
 }

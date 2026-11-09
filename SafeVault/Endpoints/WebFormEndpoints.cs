@@ -31,16 +31,19 @@ public static class WebFormEndpoints
             errors.Add("Email contains disallowed content.");
 
         return errors.Count == 0
-            ? Results.Content(RenderPage(
-                "Success", "Input validated successfully.",
-                $"Username: {username}<br/>Email: {email}"), "text/html")
+            ? Results.Content(RenderSuccess(username, email), "text/html")
             : Results.Content(RenderPage(
                 "Rejected", "Validation failed.",
                 string.Join("<br/>", errors.Select(WebUtility.HtmlEncode))),
                 "text/html", statusCode: 400);
     }
 
-    /// <summary>Minimal HTML page. All dynamic values are HTML-encoded.</summary>
+    /// <summary>Success page. User values are always HTML-encoded (internal for tests).</summary>
+    internal static string RenderSuccess(string username, string email) => RenderPage(
+        "Success", "Input validated successfully.",
+        $"Username: {WebUtility.HtmlEncode(username)}<br/>Email: {WebUtility.HtmlEncode(email)}");
+
+    /// <summary>Minimal HTML page. <paramref name="body"/> is inserted as-is — callers must HTML-encode any user data in it.</summary>
     private static string RenderPage(string title, string heading, string body) => $"""
         <!DOCTYPE html>
         <html><head><meta charset="utf-8"/><title>{WebUtility.HtmlEncode(title)}</title></head>
