@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using NUnit.Framework;
 using SafeVault.Data;
 using SafeVault.Models;
 using SafeVault.Models.Contracts;
@@ -17,7 +18,7 @@ public class TestAccountEndpoints
     public void Setup()
     {
         _factory = new WebApplicationFactory<Program>()
-            .WithWebHostBuilder(builder => 
+            .WithWebHostBuilder(builder =>
             {
                 builder.ConfigureServices(services =>
                 {
@@ -40,9 +41,7 @@ public class TestAccountEndpoints
     public async Task Register_Rejects_SqlInjection_Payload()
     {
         var payload = new RegisterRequest(
-            "'; DROP TABLE Users; --",
-            "test@example.com",
-            "ValidP@ssw0rd123!");
+            "'; DROP TABLE Users; --", "test@example.com", "ValidP@ssw0rd123!");
 
         var resp = await _client.PostAsJsonAsync("/api/account/register", payload);
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
@@ -52,9 +51,7 @@ public class TestAccountEndpoints
     public async Task Register_Rejects_Xss_Payload_In_Username()
     {
         var payload = new RegisterRequest(
-            "<script>alert(1)</script>",
-            "test@example.com",
-            "ValidP@ssw0rd123!");
+            "<script>alert(1)</script>", "test@example.com", "ValidP@ssw0rd123!");
 
         var resp = await _client.PostAsJsonAsync("/api/account/register", payload);
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
@@ -64,9 +61,7 @@ public class TestAccountEndpoints
     public async Task Register_Rejects_Invalid_Email()
     {
         var payload = new RegisterRequest(
-            "validuser",
-            "not-an-email",
-            "ValidP@ssw0rd123!");
+            "validuser", "not-an-email", "ValidP@ssw0rd123!");
 
         var resp = await _client.PostAsJsonAsync("/api/account/register", payload);
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
@@ -80,23 +75,37 @@ public class TestAccountEndpoints
         Assert.That(resp.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest));
     }
 
+    // ---------- in-memory fake (all 4 interface members) ----------
     private sealed class FakeUserRepository : IUserRepository
     {
-        private readonly Dictionary<string, User> _users = new();
+        private readonly Dictionary<string, User> _users = new(StringComparer.Ordinal);
 
         public Task<User?> GetByUsernameAsync(string username) =>
             Task.FromResult(_users.TryGetValue(username, out var u) ? u : null);
 
-        public Task<int> CreateUserAsync(string username, string email, string passwordHash)
+        public Task<int> CreateUserAsync(
+            string username, string email, string passwordHash, string role = "User")
         {
+            var id = _users.Count + 1;
             _users[username] = new User
             {
-                UserID = _users.Count + 1,
-                Username = username,
-                Email = email,
-                PasswordHash = passwordHash
+                UserID       = id,
+                Username     = username,
+                Email        = email,
+                PasswordHash = passwordHash,
+                Role         = role
             };
-            return Task.FromResult(_users[username].UserID);
+            return Task.FromResult(id);
         }
+
+        public Task<bool> SetRoleAsync(string username, string role)
+        {
+            if (!_users.TryGetValue(username, out var u)) return Task.FromResult(false);
+            u.Role = role;
+            return Task.FromResult(true);
+        }
+
+        public Task<bool> AnyAdminExistsAsync() =>
+            Task.FromResult(_users.Values.Any(u => u.Role == "Admin"));
     }
 }

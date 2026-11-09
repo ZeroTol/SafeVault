@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using SafeVault.Helpers;
 using SafeVault.Models.Contracts;
 using SafeVault.Services;
@@ -6,46 +7,47 @@ namespace SafeVault.Endpoints;
 
 public static class AccountEndpoints
 {
-    public static IEndpointRouteBuilder MapAccountEndpoints(this IEndpointRouteBuilder group)
+    public static IEndpointRouteBuilder MapAccountEndpoints(this IEndpointRouteBuilder app)
     {
+        var group = app.MapGroup("/api/account").WithTags("Account");
+
         group.MapPost("/register", RegisterAsync);
-        group.MapPost("/login", LoginAsync);
-        return group;
+        group.MapPost("/login",    LoginAsync);
+        group.MapGet ("/me",       MeAsync).RequireAuthorization();   // any authenticated user
+
+        return app;
     }
 
-    private static async Task<IResult> RegisterAsync(
-        RegisterRequest req, IAuthService auth)
+    private static async Task<IResult> RegisterAsync(RegisterRequest req, IAuthService auth)
     {
         if (!ValidationHelpers.IsValidInput(req.Username) ||
             !ValidationHelpers.IsValidEmail(req.Email) ||
             !ValidationHelpers.IsValidPassword(req.Password) ||
             !XssProtection.IsSafeInput(req.Username) ||
             !XssProtection.IsSafeInput(req.Email))
-        {
             return TypedResults.ValidationProblem(new Dictionary<string, string[]>
-            {
-                ["input"] = new[] { "Input failed validation (format or XSS markers)." }
-            });
-        }
+                { ["input"] = ["Input failed validation."] });
 
-        var ok = await auth.RegisterAsync(req.Username, req.Email, req.Password);
-        return ok
+        return await auth.RegisterAsync(req.Username, req.Email, req.Password)
             ? TypedResults.Created($"/api/account/users/{req.Username}")
             : TypedResults.Conflict(new { error = "Username already exists." });
     }
 
-    private static async Task<IResult> LoginAsync(
-        LoginRequest req, IAuthService auth)
+    private static async Task<IResult> LoginAsync(LoginRequest req, IAuthService auth)
     {
         if (!ValidationHelpers.IsValidInput(req.Username) ||
             !XssProtection.IsSafeInput(req.Username))
-        {
             return TypedResults.BadRequest(new { error = "Invalid credentials format." });
-        }
 
-        var ok = await auth.LoginAsync(req.Username, req.Password);
-        return ok
-            ? TypedResults.Ok(new { message = "Authenticated." })
-            : TypedResults.Unauthorized();
+        var result = await auth.LoginAsync(req.Username, req.Password);
+        return result is null ? TypedResults.Unauthorized() : TypedResults.Ok(result);
     }
+
+    private static IResult MeAsync(ClaimsPrincipal user) =>
+        TypedResults.Ok(new
+        {
+            userId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("sub"),
+            name   = user.Identity?.Name,
+            role   = user.FindFirstValue(ClaimTypes.Role)
+        });
 }

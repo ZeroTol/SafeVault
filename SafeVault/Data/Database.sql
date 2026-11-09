@@ -19,3 +19,10 @@ CREATE TABLE FinancialRecords (
                                   CreatedAt DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
                                   CONSTRAINT FK_Records_Users FOREIGN KEY (UserID) REFERENCES Users(UserID)
 );
+
+ALTER TABLE Users
+    ADD Role NVARCHAR(20) NOT NULL
+  CONSTRAINT DF_Users_Role DEFAULT 'User'
+  CONSTRAINT CK_Users_Role CHECK (Role IN ('Admin', 'User', 'Guest'));
+
+CREATE INDEX IX_Users_Username ON Users(Username);
